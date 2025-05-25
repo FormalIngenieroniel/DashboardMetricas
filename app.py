@@ -327,7 +327,7 @@ podrían afectar el precio por noche y, consecuentemente, la rentabilidad de la 
 Ingresa los costos asociados para realizar el cálculo.
 """)
 
-if 'property_base_simulacion' not in xst.session_state or 'precio_base_simulacion' not in st.session_state:
+if 'property_base_simulacion' not in st.session_state or 'precio_base_simulacion' not in st.session_state:
     st.warning("Primero realiza una predicción en la sección 'Simula el Precio de una Propiedad' para activar esta simulación.")
 else:
     property_base_actual = st.session_state.property_base_simulacion
