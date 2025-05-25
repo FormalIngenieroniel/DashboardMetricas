@@ -174,19 +174,17 @@ with col_form:
         'reviews': 50, 'rating': 4.5, 'host_id': 1000, 'studios': 0,
         'bedrooms': 2, 'beds': 3, 'bathrooms': 1, 'guests': 4, 'toiles': 1,
         'checkout_category': 'No Definido', 'checkin_category': 'Mañana',
-        'pais': 'Japan', 'sector': 'Okinawa'
+        'pais': 'Colombia',  # Cambiado a Colombia para probar con el ejemplo del mapping
+        'sector': 'Bogotá D.C.' # Cambiado para coincidir
     }
 
     # --- Usar categorías dinámicas o por defecto ---
     paises_options = dynamic_categories.get('pais', default_paises) if dynamic_categories else default_paises
     checkin_options = dynamic_categories.get('checkin_category', default_checkin_options) if dynamic_categories else default_checkin_options
     checkout_options = dynamic_categories.get('checkout_category', default_checkout_options) if dynamic_categories else default_checkout_options
-    # Para sector, la lista inicial puede ser todos los sectores o basada en el país por defecto.
-    # Se actualizará dinámicamente.
-    all_sectors_flat = dynamic_categories.get('sector', []) if dynamic_categories else [s for secs in st.session_state.pais_sector_mapping.values() for s in secs]
-
 
     st.write("**Detalles de la Propiedad:**")
+    # ... (sliders para bedrooms, bathrooms, beds, guests, toiles, studios - COMO ANTES) ...
     c1, c2, c3 = st.columns(3)
     bedrooms_input = c1.slider("Habitaciones (bedrooms)", 0, 10, default_property_base['bedrooms'])
     bathrooms_input = c2.slider("Baños Completos (bathrooms)", 0, 8, default_property_base['bathrooms'])
@@ -197,20 +195,43 @@ with col_form:
     toiles_input = c5.slider("Medios Baños/Aseos (toiles)", 0, 5, default_property_base['toiles'])
     studios_input = c6.selectbox("¿Es un Estudio? (studios)", [0, 1], index=default_property_base['studios'], format_func=lambda x: "Sí" if x == 1 else "No")
 
+
     st.write("**Ubicación y Host:**")
     c7, c8, c9 = st.columns(3)
     
     default_pais_index = paises_options.index(default_property_base['pais']) if default_property_base['pais'] in paises_options else 0
-    pais_input = c7.selectbox("País (pais)", paises_options, index=default_pais_index)
+    pais_input = c7.selectbox("País (pais)", paises_options, index=default_pais_index, key="pais_selector")
 
-    # Sectores dependientes del país
-    sectores_del_pais_actual = st.session_state.pais_sector_mapping.get(pais_input, all_sectors_flat if all_sectors_flat else [default_property_base['sector']]) # Fallback
-    default_sector_index = sectores_del_pais_actual.index(default_property_base['sector']) if default_property_base['sector'] in sectores_del_pais_actual and pais_input == default_property_base['pais'] else 0
-    sector_input = c8.selectbox("Sector/Ciudad (sector)", sectores_del_pais_actual, index=default_sector_index)
+    # --- LÓGICA REVISADA PARA SECTORES DEPENDIENTES ---
+    sectores_para_pais_seleccionado = []
+    if pais_input: # Solo si se ha seleccionado un país
+        # Obtener la lista de sectores para el país seleccionado del mapeo.
+        # Si el país no está en el mapeo, o no tiene sectores, será una lista vacía.
+        sectores_para_pais_seleccionado = st.session_state.pais_sector_mapping.get(pais_input, [])
+
+    default_sector_value = None
+    if pais_input == default_property_base['pais'] and default_property_base['sector'] in sectores_para_pais_seleccionado:
+        # Si el país seleccionado es el país por defecto Y el sector por defecto está en la lista de ese país
+        default_sector_value = default_property_base['sector']
+    elif sectores_para_pais_seleccionado:
+        # Si hay sectores para el país seleccionado, pero el sector por defecto no aplica, tomar el primero de la lista
+        default_sector_value = sectores_para_pais_seleccionado[0]
     
+    # El widget selectbox para Sector/Ciudad
+    if sectores_para_pais_seleccionado: # Si hay sectores para mostrar
+        sector_input = c8.selectbox(
+            "Sector/Ciudad (sector)",
+            options=sectores_para_pais_seleccionado,
+            index=sectores_para_pais_seleccionado.index(default_sector_value) if default_sector_value and default_sector_value in sectores_para_pais_seleccionado else 0
+        )
+    else: # Si no hay sectores para el país seleccionado
+        c8.info(f"No hay sectores definidos para '{pais_input}' en el mapeo.")
+        sector_input = None # Importante: el valor de sector será None
+
     host_id_input = c9.number_input("ID del Anfitrión (host_id)", value=default_property_base['host_id'], step=1)
 
     st.write("**Reseñas y Logística:**")
+    # ... (inputs para reviews, rating, checkin_category, checkout_category - COMO ANTES) ...
     c10, c11, c12 = st.columns(3)
     reviews_input = c10.number_input("Número de Reseñas (reviews)", 0, 2000, default_property_base['reviews'])
     rating_input = c11.slider("Calificación Promedio (rating)", 0.0, 5.0, default_property_base['rating'], 0.1)
@@ -219,44 +240,38 @@ with col_form:
     checkin_input = c12.selectbox("Categoría Check-in (checkin_category)", checkin_options, index=default_checkin_index)
     
     default_checkout_index = checkout_options.index(default_property_base['checkout_category']) if default_property_base['checkout_category'] in checkout_options else 0
-    checkout_input = c12.selectbox("Categoría Check-out (checkout_category)", checkout_options, index=default_checkout_index, key="checkout_cat_key") # Añadí key para evitar problema de duplicados con checkin_input
+    checkout_input = c12.selectbox("Categoría Check-out (checkout_category)", checkout_options, index=default_checkout_index, key="checkout_cat_key")
+
 
     if st.button("📈 Predecir Precio Base", key="predict_base_interactive", use_container_width=True):
         if modelo:
-            input_data = {
-                'bathrooms': bathrooms_input, 'pais': pais_input, 'host_id': host_id_input,
-                'bedrooms': bedrooms_input, 'reviews': reviews_input, 'beds': beds_input,
-                'sector': sector_input, 'guests': guests_input,
-                'checkin_category': checkin_input, 'checkout_category': checkout_input,
-                'rating': rating_input, 'toiles': toiles_input, 'studios': studios_input
-            }
-            # El orden debe ser el que el modelo espera ANTES de la transformación del preprocesador.
-            # La pipeline de joblib se encarga de las transformaciones.
-            # Usaremos el orden de `default_property_base.keys()` como una suposición razonable
-            # o el orden que definiste para `ordered_columns` en tu versión anterior.
-            # Es crucial que estas sean las columnas originales que tu preprocesador espera.
-            ordered_original_columns = [
-                'reviews', 'rating', 'host_id', 'studios', 'bedrooms', 'beds',
-                'bathrooms', 'guests', 'toiles', 'checkout_category',
-                'checkin_category', 'pais', 'sector'
-            ] # Reordenar para que coincida con la estructura de default_property_base o tu entrenamiento
-            
-            # Recrear input_data con un orden consistente si es necesario
-            # El DataFrame creado con un diccionario mantiene el orden de inserción en Python 3.7+
-            # pero es más seguro crear el DataFrame con una lista de columnas si el orden es crítico y diferente.
-            input_df = pd.DataFrame([input_data])
-            # Si tu modelo es muy sensible al orden de columnas ANTES del preprocesador,
-            # asegúrate que input_df tenga ese orden. Ej: input_df = input_df[lista_columnas_ordenadas_originales]
-
-            try:
-                prediccion = modelo.predict(input_df)[0]
-                st.success(f"**Precio Estimado por Noche: COP {prediccion:,.2f}**")
-                st.session_state.precio_base_simulacion = prediccion
-                st.session_state.property_base_simulacion = input_data.copy()
-            except Exception as e:
-                st.error(f"Error al predecir: {e}")
-                st.dataframe(input_df) # Mostrar el df que se envió
-                st.write("Columnas del DataFrame enviado:", input_df.columns.tolist())
+            if sector_input is None and sectores_para_pais_seleccionado:
+                 st.warning("Por favor, seleccione un sector válido.") # O si el país no tiene sectores, manejarlo.
+            elif sector_input is None and not sectores_para_pais_seleccionado:
+                 st.error(f"No se puede predecir: {pais_input} no tiene sectores configurados o el país no está en el mapeo.")
+            else:
+                input_data = {
+                    'bathrooms': bathrooms_input, 'pais': pais_input, 'host_id': host_id_input,
+                    'bedrooms': bedrooms_input, 'reviews': reviews_input, 'beds': beds_input,
+                    'sector': sector_input, 'guests': guests_input, # sector_input puede ser None si no se seleccionó
+                    'checkin_category': checkin_input, 'checkout_category': checkout_input,
+                    'rating': rating_input, 'toiles': toiles_input, 'studios': studios_input
+                }
+                
+                # Validar que sector_input no sea None antes de predecir si es un campo obligatorio para el modelo
+                if input_data['sector'] is None:
+                    st.error("El campo 'Sector/Ciudad' es obligatorio y no se ha podido determinar. Verifica el mapeo de país-sector.")
+                else:
+                    input_df = pd.DataFrame([input_data])
+                    try:
+                        prediccion = modelo.predict(input_df)[0]
+                        st.success(f"**Precio Estimado por Noche: COP {prediccion:,.2f}**")
+                        st.session_state.precio_base_simulacion = prediccion
+                        st.session_state.property_base_simulacion = input_data.copy()
+                    except Exception as e:
+                        st.error(f"Error al predecir: {e}")
+                        st.dataframe(input_df)
+                        st.write("Columnas del DataFrame enviado:", input_df.columns.tolist())
         else:
             st.warning("El modelo no está cargado.")
 
