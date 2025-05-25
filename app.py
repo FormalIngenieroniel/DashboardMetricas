@@ -75,6 +75,60 @@ modelo, dynamic_categories = load_model_and_categories()
 default_checkin_options = ['Mañana', 'Tarde', 'Noche', 'Flexible', 'No Definido']
 default_checkout_options = ['Mañana', 'Tarde', 'Noche', 'Flexible', 'No Definido']
 
+# --- Función para cargar y filtrar el mapeo país-sector desde JSON ---
+@st.cache_resource
+def load_and_filter_pais_sector_mapping(filepath="pais_sector_mapping.json"):
+    # Valores por defecto si el archivo JSON no está disponible o no es válido
+    pais_sector_mapping_default = {
+        'Japan': ['Okinawa', 'Tokyo', 'Kyoto', 'Hokkaido'],
+        'United States': ['New York', 'California', 'Florida'],
+        'Spain': ['Madrid', 'Barcelona', 'Seville'],
+        'France': ['Paris', 'Nice', 'Lyon'],
+        'Colombia': ['Bogotá D.C.', 'Medellín', 'Cartagena'],
+        'Canada': ['Toronto', 'Vancouver', 'Montreal'],
+        'Other': ['OtherSector']
+    }
+    
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            mapping = json.load(f)
+        st.success(f"Mapeo país-sector cargado exitosamente desde '{filepath}'.")
+    except FileNotFoundError:
+        st.warning(f"Archivo '{filepath}' no encontrado. Usando mapeo por defecto.")
+        mapping = pais_sector_mapping_default
+    except json.JSONDecodeError:
+        st.warning(f"Archivo '{filepath}' no es un JSON válido. Usando mapeo por defecto.")
+        mapping = pais_sector_mapping_default
+    except Exception as e:
+        st.warning(f"Error al cargar '{filepath}': {e}. Usando mapeo por defecto.")
+        mapping = pais_sector_mapping_default
+
+    # Filtrar el mapeo para incluir solo países y sectores que existen en dynamic_categories
+    valid_paises = set(dynamic_categories.get('pais', []))
+    valid_sectors = set(dynamic_categories.get('sector', []))
+    
+    filtered_mapping = {}
+    for pais, sectores in mapping.items():
+        if pais in valid_paises:
+            # Filtrar sectores para incluir solo los que están en el dataset
+            sectores_validos = [sector for sector in sectores if sector in valid_sectors]
+            if sectores_validos:  # Solo añadir el país si tiene sectores válidos
+                filtered_mapping[pais] = sectores_validos
+            else:
+                st.warning(f"El país '{pais}' no tiene sectores válidos en el dataset. Se omitirá.")
+        else:
+            st.warning(f"El país '{pais}' no está en el dataset. Se omitirá.")
+    
+    if not filtered_mapping:
+        st.error("No se encontraron países ni sectores válidos en el mapeo después de filtrar.")
+        # Fallback mínimo para evitar errores
+        filtered_mapping = {'Colombia': ['Bogotá D.C.']} if 'Colombia' in valid_paises and 'Bogotá D.C.' in valid_sectors else {}
+    
+    return filtered_mapping
+
+if 'pais_sector_mapping' not in st.session_state:
+    st.session_state.pais_sector_mapping = load_and_filter_pais_sector_mapping()
+
 # --- Título Principal y Descripción del Problema ---
 st.title("🏠 POC: Sistema Inteligente de Evaluación de Rentabilidad para Airbnb")
 st.markdown("""
@@ -152,11 +206,14 @@ with col_form:
         'sector': None  # Se asignará después de validar categorías
     }
 
-    # Obtener las opciones de países directamente desde dynamic_categories
-    paises_options = dynamic_categories.get('pais', [])
+    # Obtener las opciones de países desde dynamic_categories (filtradas por el mapeo)
+    paises_options = sorted(list(st.session_state.pais_sector_mapping.keys()))
     if not paises_options:
-        st.error("No se encontraron países en las categorías del modelo. Por favor, verifica el modelo.")
-        paises_options = ['Colombia']  # Fallback mínimo para evitar errores
+        st.error("No se encontraron países válidos después de filtrar el mapeo país-sector.")
+        paises_options = dynamic_categories.get('pais', [])
+        if not paises_options:
+            st.error("No se encontraron países en las categorías del modelo. Por favor, verifica el modelo.")
+            paises_options = ['Colombia']  # Fallback mínimo para evitar errores
 
     # Asegurar que el país por defecto esté en las opciones disponibles
     default_pais = 'Colombia' if 'Colombia' in paises_options else paises_options[0]
@@ -182,15 +239,11 @@ with col_form:
     default_pais_index = paises_options.index(default_property_base['pais'])
     pais_input = c7.selectbox("País (pais)", paises_options, index=default_pais_index, key="pais_selector")
 
-    # Obtener las opciones de sectores directamente desde dynamic_categories
-    all_sectors = dynamic_categories.get('sector', [])
-    if not all_sectors:
-        st.error("No se encontraron sectores en las categorías del modelo. Por favor, verifica el modelo.")
-        all_sectors = ['Bogotá D.C.']  # Fallback mínimo para evitar errores
-
-    # Filtrar sectores que podrían estar asociados con el país seleccionado
-    # Nota: Como no tenemos un mapeo explícito, asumimos que todos los sectores en dynamic_categories son válidos
-    sectores_para_pais_seleccionado = all_sectors
+    # Obtener los sectores correspondientes al país seleccionado desde el mapeo filtrado
+    sectores_para_pais_seleccionado = st.session_state.pais_sector_mapping.get(pais_input, [])
+    if not sectores_para_pais_seleccionado:
+        c8.error(f"No se encontraron sectores válidos para el país '{pais_input}' en el mapeo filtrado.")
+        sectores_para_pais_seleccionado = ['Bogotá D.C.']  # Fallback mínimo para evitar errores
 
     default_sector_value = 'Bogotá D.C.' if 'Bogotá D.C.' in sectores_para_pais_seleccionado else sectores_para_pais_seleccionado[0]
     default_property_base['sector'] = default_sector_value
@@ -215,10 +268,11 @@ with col_form:
     default_checkout_index = checkout_options.index(default_property_base['checkout_category']) if default_property_base['checkout_category'] in checkout_options else 0
     checkout_input = c12_b.selectbox("Categoría Check-out", checkout_options, index=default_checkout_index, key="checkout_cat_key")
 
-    # Mostrar categorías válidas del modelo para depuración
+    # Mostrar categorías válidas del modelo y mapeo para depuración
     st.write("**Categorías Válidas del Modelo (para depuración):**")
     st.write(f"Países reconocidos: {dynamic_categories.get('pais', [])}")
     st.write(f"Sectores reconocidos: {dynamic_categories.get('sector', [])}")
+    st.write(f"Mapeo país-sector filtrado: {st.session_state.pais_sector_mapping}")
 
     if st.button("📈 Predecir Precio Base", key="predict_base_interactive", use_container_width=True):
         if modelo:
@@ -267,7 +321,7 @@ with col_form:
                         # Ajuste manual basado en supuestos de precios (puede ajustarse según datos reales)
                         country_multipliers = {
                             'Japan': 1.5, 'United States': 1.4, 'Spain': 1.3, 'France': 1.2, 
-                            'Congo': 0.8, 'Austria': 1.3, 'Other': 1.0
+                            'Canada': 1.3, 'Other': 1.0
                         }
                         pais_multiplier = country_multipliers.get(pais_to_use, 1.0)
                         st.info(f"Multiplicador aplicado por país '{pais_to_use}': {pais_multiplier}x")
@@ -307,7 +361,7 @@ with col_importance:
     st.markdown("Visualización de cómo cada característica influye en la predicción del precio, según el modelo.")
     data_importancia_agrupada = {
         'Original_Column': ['bathrooms', 'pais', 'host_id', 'bedrooms', 'reviews', 'beds', 'sector', 'guests', 'checkin_category', 'checkout_category', 'rating', 'toiles', 'studios'],
-        'Importance': [0.257116, 0.191497, 0.122024, 0.111934, 0.103072, 0.075089, 0.057227, 0.033455, 0.019237, 0.017591, 0.007317, 0.004440, 0.000000]
+        'Importance': [0.257116, 0.191497, 0.122024, 0.111934, '0.103072', 0.075089, 0.057227, 0.033455, 0.019237, 0.017591, 0.007317, 0.004440, 0.000000]
     }
     df_importancia = pd.DataFrame(data_importancia_agrupada).sort_values(by="Importance", ascending=False)
     
