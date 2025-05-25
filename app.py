@@ -361,7 +361,7 @@ with col_importance:
     st.markdown("Visualización de cómo cada característica influye en la predicción del precio, según el modelo.")
     data_importancia_agrupada = {
         'Original_Column': ['bathrooms', 'pais', 'host_id', 'bedrooms', 'reviews', 'beds', 'sector', 'guests', 'checkin_category', 'checkout_category', 'rating', 'toiles', 'studios'],
-        'Importance': [0.257116, 0.191497, 0.122024, 0.111934, '0.103072', 0.075089, 0.057227, 0.033455, 0.019237, 0.017591, 0.007317, 0.004440, 0.000000]
+        'Importance': [0.257116, 0.191497, 0.122024, 0.111934, 0.103072, 0.075089, 0.057227, 0.033455, 0.019237, 0.017591, 0.007317, 0.004440, 0.000000]
     }
     df_importancia = pd.DataFrame(data_importancia_agrupada).sort_values(by="Importance", ascending=False)
     
