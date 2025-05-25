@@ -252,6 +252,11 @@ with col_form:
     default_checkout_index = checkout_options.index(default_property_base['checkout_category']) if default_property_base['checkout_category'] in checkout_options else 0
     checkout_input = c12_b.selectbox("Categoría Check-out", checkout_options, index=default_checkout_index, key="checkout_cat_key")
 
+    # Mostrar categorías válidas del modelo para depuración
+    st.write("**Categorías Válidas del Modelo (para depuración):**")
+    st.write(f"Países reconocidos: {dynamic_categories.get('pais', default_paises)}")
+    st.write(f"Sectores reconocidos: {dynamic_categories.get('sector', ['No disponibles'])}")
+
     if st.button("📈 Predecir Precio Base", key="predict_base_interactive", use_container_width=True):
         if modelo:
             if not pais_input:
@@ -261,15 +266,27 @@ with col_form:
             elif not sector_input and not sectores_para_pais_seleccionado:
                  st.error(f"No se puede predecir: El país '{pais_input}' no tiene sectores configurados en el mapeo o el mapeo no se cargó correctamente.")
             else:
+                # Validar que pais_input y sector_input estén en las categorías del modelo
+                valid_paises = dynamic_categories.get('pais', default_paises)
+                valid_sectores = dynamic_categories.get('sector', sectores_para_pais_seleccionado)
+                pais_to_use = pais_input if pais_input in valid_paises else valid_paises[0] if valid_paises else default_property_base['pais']
+                sector_to_use = sector_input if sector_input in valid_sectores else valid_sectores[0] if valid_sectores else default_property_base['sector']
+                
+                if pais_input != pais_to_use or sector_input != sector_to_use:
+                    st.warning(f"Advertencia: El país '{pais_input}' o sector '{sector_input}' no está en las categorías del modelo. Usando país: '{pais_to_use}' y sector: '{sector_to_use}'.")
+
                 input_data = {
-                    'bathrooms': bathrooms_input, 'pais': pais_input, 'host_id': host_id_input,
+                    'bathrooms': bathrooms_input, 'pais': pais_to_use, 'host_id': host_id_input,
                     'bedrooms': bedrooms_input, 'reviews': reviews_input, 'beds': beds_input,
-                    'sector': sector_input, 'guests': guests_input,
+                    'sector': sector_to_use, 'guests': guests_input,
                     'checkin_category': checkin_input, 'checkout_category': checkout_input,
                     'rating': rating_input, 'toiles': toiles_input, 'studios': studios_input
                 }
                 
                 input_df = pd.DataFrame([input_data])
+                st.write("**Datos enviados al modelo (para depuración):**")
+                st.dataframe(input_df)
+
                 try:
                     prediccion = modelo.predict(input_df)[0]
                     # Aplicar multiplicadores según el ejemplo para baños y habitaciones
