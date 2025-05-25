@@ -2,3 +2,6 @@ dash
 pandas
 plotly
 gunicorn
+streamlit
+joblib
+scikit-learn
