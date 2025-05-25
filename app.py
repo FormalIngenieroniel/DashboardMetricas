@@ -272,8 +272,27 @@ with col_form:
                 input_df = pd.DataFrame([input_data])
                 try:
                     prediccion = modelo.predict(input_df)[0]
-                    st.success(f"**Precio Estimado por Noche: COP {prediccion:,.2f}**")
-                    st.session_state.precio_base_simulacion = prediccion
+                    # Aplicar multiplicadores según el ejemplo para baños y habitaciones
+                    bathroom_diff = bathrooms_input - default_property_base['bathrooms']
+                    bedroom_diff = bedrooms_input - default_property_base['bedrooms']
+                    multiplier = 1.0  # Multiplicador base
+                    if bathroom_diff == 1 and bedroom_diff == 0:
+                        multiplier = 2.0  # Multiplicador para +1 baño
+                    elif bedroom_diff == 1 and bathroom_diff == 0:
+                        multiplier = 1.5  # Multiplicador para +1 habitación
+                    elif bathroom_diff == 1 and bedroom_diff == 1:
+                        multiplier = 2.5  # Multiplicador para +1 baño y +1 habitación
+                    elif bathroom_diff > 1 and bedroom_diff == 0:
+                        multiplier = 2.0 + (bathroom_diff - 1) * 0.5  # Escalar para más baños
+                    elif bedroom_diff > 1 and bathroom_diff == 0:
+                        multiplier = 1.5 + (bedroom_diff - 1) * 0.3  # Escalar para más habitaciones
+                    elif bathroom_diff > 0 and bedroom_diff > 0:
+                        multiplier = 2.5 + (bathroom_diff - 1) * 0.5 + (bedroom_diff - 1) * 0.3  # Combinación
+                    # Aplicar el multiplicador a la predicción
+                    prediccion_final = prediccion * multiplier
+                    st.success(f"**Precio Estimado por Noche: COP {prediccion_final:,.2f}**")
+                    st.info(f"Nota: El precio ha sido ajustado con un multiplicador de {multiplier:.2f}x basado en las mejoras de {bathroom_diff} baño(s) y {bedroom_diff} habitación(es).")
+                    st.session_state.precio_base_simulacion = prediccion_final
                     st.session_state.property_base_simulacion = input_data.copy()
                 except Exception as e:
                     st.error(f"Error al predecir: {e}")
@@ -300,7 +319,7 @@ with col_importance:
 
 st.markdown("---")
 
-# --- Sección de Simulación de Mejoras y Rentabilidad ---
+# --- Sección de Simulación de Mejoras y Cálculo de Rentabilidad ---
 st.header("🛠️ Simulación de Mejoras y Cálculo de Rentabilidad")
 st.markdown("""
 Aquí puedes simular cómo ciertas mejoras a la propiedad (utilizando la configuración de la sección de predicción interactiva como base)
@@ -308,7 +327,7 @@ podrían afectar el precio por noche y, consecuentemente, la rentabilidad de la 
 Ingresa los costos asociados para realizar el cálculo.
 """)
 
-if 'property_base_simulacion' not in st.session_state or 'precio_base_simulacion' not in st.session_state:
+if 'property_base_simulacion' not in xst.session_state or 'precio_base_simulacion' not in st.session_state:
     st.warning("Primero realiza una predicción en la sección 'Simula el Precio de una Propiedad' para activar esta simulación.")
 else:
     property_base_actual = st.session_state.property_base_simulacion
