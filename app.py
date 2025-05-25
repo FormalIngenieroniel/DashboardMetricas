@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 import joblib
 import numpy as np
+import json # Importar json
 
 # --- Configuración de la Página ---
 st.set_page_config(
@@ -31,17 +32,11 @@ def load_model_and_categories():
             preprocessor = model.named_steps.get('preprocessor')
             if not preprocessor:
                 st.warning("Paso 'preprocessor' no encontrado en el pipeline del modelo.")
-                return model, None
-
-            # --- Intenta extraer categorías del OneHotEncoder ---
-            # Esto asume que tu preprocesador tiene un transformador llamado 'cat'
-            # y que este transformador (o un paso dentro de él) es un OneHotEncoder.
-            # Ajusta los nombres ('cat', 'onehotencoder') si son diferentes en tu pipeline.
+                return model, dynamic_categories # Devolver dynamic_categories aunque esté vacío
 
             cat_transformer_tuple = None
             for t_name, t_obj, t_cols in preprocessor.transformers_:
-                # 'cat' debe ser el nombre que le diste al transformador categórico en ColumnTransformer
-                if t_name == 'cat': # NOMBRE DEL TRANSFORMADOR CATEGÓRICO EN ColumnTransformer
+                if t_name == 'cat':
                     cat_transformer_tuple = (t_obj, t_cols)
                     break
             
@@ -49,53 +44,77 @@ def load_model_and_categories():
                 cat_pipeline_or_encoder, original_cat_cols = cat_transformer_tuple
                 ohe = None
                 if hasattr(cat_pipeline_or_encoder, 'named_steps'): # Es un Pipeline
-                    # Intenta nombres comunes para el OneHotEncoder dentro del pipeline categórico
-                    for step_name in ['onehotencoder', 'one_hot_encoder', 'ohe']:
+                    for step_name in ['onehotencoder', 'one_hot_encoder', 'ohe', 'onehot']: # Añadido 'onehot'
                         if step_name in cat_pipeline_or_encoder.named_steps:
                             ohe = cat_pipeline_or_encoder.named_steps[step_name]
                             break
-                    if not ohe and hasattr(cat_pipeline_or_encoder.steps[-1][1], 'categories_'): # Último paso
-                         ohe = cat_pipeline_or_encoder.steps[-1][1]
+                    if not ohe and hasattr(cat_pipeline_or_encoder.steps[-1][1], 'categories_'):
+                        ohe = cat_pipeline_or_encoder.steps[-1][1]
                 elif hasattr(cat_pipeline_or_encoder, 'categories_'): # Es el OneHotEncoder directamente
                     ohe = cat_pipeline_or_encoder
 
                 if ohe and hasattr(ohe, 'categories_'):
-                    for i, col_name in enumerate(original_cat_cols):
-                        categories = ohe.categories_[i]
-                        # Filtrar NaNs si existen y convertir a string, luego ordenar
-                        dynamic_categories[col_name] = sorted([str(cat) for cat in categories if pd.notna(cat)])
+                    if len(original_cat_cols) == len(ohe.categories_):
+                        for i, col_name in enumerate(original_cat_cols):
+                            categories = ohe.categories_[i]
+                            dynamic_categories[col_name] = sorted([str(cat) for cat in categories if pd.notna(cat)])
+                    else:
+                        st.warning(f"Discrepancia en el número de columnas categóricas ({len(original_cat_cols)}) y las categorías del OHE ({len(ohe.categories_)}). No se pudieron extraer todas las categorías dinámicas.")
+
                 else:
-                    st.warning("No se pudo encontrar el OneHotEncoder o sus categorías dentro del pipeline 'cat'. Las listas desplegables usarán valores predeterminados.")
+                    st.warning("No se pudo encontrar el OneHotEncoder o sus categorías dentro del pipeline 'cat'. Las listas desplegables podrían usar valores predeterminados.")
             else:
                 st.warning("Transformador categórico ('cat') no encontrado en el preprocesador. Las listas desplegables usarán valores predeterminados.")
 
         except Exception as e:
             st.warning(f"Error al extraer categorías dinámicas del modelo: {e}. Se usarán valores predeterminados.")
-            # dynamic_categories permanecerá vacío o parcialmente lleno
-
+    
     return model, dynamic_categories
 
 modelo, dynamic_categories = load_model_and_categories()
 
-# --- Datos para Selectores (Valores por defecto si la extracción falla) ---
-# Estos se usarán si dynamic_categories no se puede poblar para una clave específica.
-# PASTA AQUÍ EL DICCIONARIO `pais_sector_mapping` GENERADO EN TU NOTEBOOK
-# Ejemplo:
+# --- Valores por defecto para Selectores ---
+# Estos se usarán si dynamic_categories no se puede poblar o el mapeo falla.
 pais_sector_mapping_default = {
     'Japan': ['Okinawa', 'Tokyo', 'Kyoto', 'Hokkaido'],
     'United States': ['New York', 'California', 'Florida'],
     'Spain': ['Madrid', 'Barcelona', 'Seville'],
     'France': ['Paris', 'Nice', 'Lyon'],
-    'Other': ['OtherSector'] # Asegúrate de tener una opción para 'Other' si 'Other' es un país
+    'Colombia': ['Bogotá D.C.', 'Medellín', 'Cartagena'], # Ejemplo, actualiza con tus datos
+    'Other': ['OtherSector']
 }
-# Si tienes el mapping real, reemplaza el de arriba.
-# Este es un ejemplo, ¡DEBES REEMPLAZARLO CON TU MAPEO REAL!
-st.session_state.pais_sector_mapping = pais_sector_mapping_default
-
-# Para otros selectores, definimos listas por defecto si no se pueden cargar dinámicamente
 default_checkin_options = ['Mañana', 'Tarde', 'Noche', 'Flexible', 'No Definido']
 default_checkout_options = ['Mañana', 'Tarde', 'Noche', 'Flexible', 'No Definido']
-default_paises = ['Japan', 'United States', 'Spain', 'France', 'Other']
+default_paises = ['Japan', 'United States', 'Spain', 'France', 'Colombia', 'Other']
+
+
+# --- Función para cargar el mapeo país-sector desde JSON ---
+@st.cache_resource # Cache para no recargar en cada interacción
+def load_pais_sector_mapping_from_file(filepath="pais_sector_mapping.json"):
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            mapping = json.load(f)
+        st.success(f"Mapeo país-sector cargado exitosamente desde '{filepath}'.")
+        return mapping
+    except FileNotFoundError:
+        st.error(f"Error: El archivo '{filepath}' no se encontró. "
+                 "Asegúrate de generar este archivo desde tu notebook de entrenamiento "
+                 "y colocarlo en el mismo directorio que la app. "
+                 "Se usarán los valores por defecto para el mapeo país-sector.")
+        return pais_sector_mapping_default # Usar el default si el archivo no existe
+    except json.JSONDecodeError:
+        st.error(f"Error: El archivo '{filepath}' no es un JSON válido. Se usarán los valores por defecto.")
+        return pais_sector_mapping_default
+    except Exception as e:
+        st.error(f"Error desconocido al cargar '{filepath}': {e}. Se usarán los valores por defecto.")
+        return pais_sector_mapping_default
+
+# --- Cargar el mapeo país-sector ---
+# Esta variable contendrá el mapeo real (del archivo) o el por defecto si falla la carga.
+# Se guarda en st.session_state para persistir entre reruns si es necesario,
+# aunque @st.cache_resource ya ayuda con la carga eficiente.
+if 'pais_sector_mapping' not in st.session_state:
+    st.session_state.pais_sector_mapping = load_pais_sector_mapping_from_file()
 
 
 # --- Título Principal y Descripción del Problema ---
@@ -104,7 +123,6 @@ st.markdown("""
 El objetivo de este dashboard es presentar una **Prueba de Concepto (POC)** de cómo un modelo de Machine Learning
 puede solucionar la necesidad de evaluar la rentabilidad y el potencial de mejora de propiedades en Airbnb.
 """)
-# ... (resto de la descripción del problema sin cambios) ...
 st.markdown("""
 ---
 ### El Desafío:
@@ -121,6 +139,7 @@ st.markdown("---")
 
 # --- Sección de Confiabilidad del Modelo ---
 st.header("📊 Confiabilidad del Modelo de Predicción")
+# ... (resto de la sección sin cambios) ...
 st.markdown("""
 Para asegurar la validez de nuestras predicciones, el modelo fue evaluado rigurosamente.
 A continuación, se presentan las métricas clave y una comparación de predicciones contra valores reales.
@@ -150,8 +169,8 @@ data_comparacion = {
 df_comparacion = pd.DataFrame(data_comparacion)
 df_comparacion['Predicción'] = df_comparacion['Predicción'].round(2)
 df_comparacion['Error Absoluto'] = df_comparacion['Error Absoluto'].round(2)
-for col in ['Real', 'Predicción', 'Error Absoluto']:
-    df_comparacion[col] = df_comparacion[col].apply(lambda x: f"COP {x:,.2f}")
+for col_comp in ['Real', 'Predicción', 'Error Absoluto']:
+    df_comparacion[col_comp] = df_comparacion[col_comp].apply(lambda x: f"COP {x:,.2f}")
 st.dataframe(df_comparacion, use_container_width=True)
 st.markdown("""
 Esta tabla muestra las primeras 10 predicciones del conjunto de prueba. Se observa variabilidad en la precisión,
@@ -174,17 +193,31 @@ with col_form:
         'reviews': 50, 'rating': 4.5, 'host_id': 1000, 'studios': 0,
         'bedrooms': 2, 'beds': 3, 'bathrooms': 1, 'guests': 4, 'toiles': 1,
         'checkout_category': 'No Definido', 'checkin_category': 'Mañana',
-        'pais': 'Colombia',  # Cambiado a Colombia para probar con el ejemplo del mapping
-        'sector': 'Bogotá D.C.' # Cambiado para coincidir
+        'pais': 'Colombia', # País por defecto
+        'sector': 'Bogotá D.C.' # Sector por defecto para Colombia
     }
 
     # --- Usar categorías dinámicas o por defecto ---
-    paises_options = dynamic_categories.get('pais', default_paises) if dynamic_categories else default_paises
+    # Para paises_options, priorizar las llaves del mapeo cargado
+    if st.session_state.pais_sector_mapping and st.session_state.pais_sector_mapping != pais_sector_mapping_default:
+        paises_options = sorted(list(st.session_state.pais_sector_mapping.keys()))
+    else: # Fallback si el mapeo es el default o está vacío
+        paises_options = dynamic_categories.get('pais', default_paises) if dynamic_categories else default_paises
+        if not paises_options: # Si sigue vacío, usar el default_paises directamente
+             paises_options = default_paises
+
+    # Asegurar que el país por defecto esté en las opciones, si no, tomar el primero
+    if default_property_base['pais'] not in paises_options and paises_options:
+        default_property_base['pais'] = paises_options[0]
+    elif not paises_options: # Si no hay opciones de país (muy improbable)
+        st.warning("No hay países disponibles para seleccionar.")
+        paises_options = [default_property_base['pais']] # Evitar error en selectbox
+
     checkin_options = dynamic_categories.get('checkin_category', default_checkin_options) if dynamic_categories else default_checkin_options
     checkout_options = dynamic_categories.get('checkout_category', default_checkout_options) if dynamic_categories else default_checkout_options
 
+
     st.write("**Detalles de la Propiedad:**")
-    # ... (sliders para bedrooms, bathrooms, beds, guests, toiles, studios - COMO ANTES) ...
     c1, c2, c3 = st.columns(3)
     bedrooms_input = c1.slider("Habitaciones (bedrooms)", 0, 10, default_property_base['bedrooms'])
     bathrooms_input = c2.slider("Baños Completos (bathrooms)", 0, 8, default_property_base['bathrooms'])
@@ -204,91 +237,109 @@ with col_form:
 
     # --- LÓGICA REVISADA PARA SECTORES DEPENDIENTES ---
     sectores_para_pais_seleccionado = []
-    if pais_input: # Solo si se ha seleccionado un país
-        # Obtener la lista de sectores para el país seleccionado del mapeo.
-        # Si el país no está en el mapeo, o no tiene sectores, será una lista vacía.
+    if pais_input:
+        # Usar el mapeo cargado en st.session_state
         sectores_para_pais_seleccionado = st.session_state.pais_sector_mapping.get(pais_input, [])
 
     default_sector_value = None
     if pais_input == default_property_base['pais'] and default_property_base['sector'] in sectores_para_pais_seleccionado:
-        # Si el país seleccionado es el país por defecto Y el sector por defecto está en la lista de ese país
         default_sector_value = default_property_base['sector']
-    elif sectores_para_pais_seleccionado:
-        # Si hay sectores para el país seleccionado, pero el sector por defecto no aplica, tomar el primero de la lista
+    elif sectores_para_pais_seleccionado: # Si hay sectores para el país, tomar el primero como default si el original no aplica
         default_sector_value = sectores_para_pais_seleccionado[0]
     
-    # El widget selectbox para Sector/Ciudad
-    if sectores_para_pais_seleccionado: # Si hay sectores para mostrar
+    sector_input = None # Inicializar sector_input
+    if sectores_para_pais_seleccionado:
+        # Asegurar que el default_sector_value es válido antes de buscar su índice
+        idx_sector = 0
+        if default_sector_value and default_sector_value in sectores_para_pais_seleccionado:
+            idx_sector = sectores_para_pais_seleccionado.index(default_sector_value)
+        
         sector_input = c8.selectbox(
             "Sector/Ciudad (sector)",
             options=sectores_para_pais_seleccionado,
-            index=sectores_para_pais_seleccionado.index(default_sector_value) if default_sector_value and default_sector_value in sectores_para_pais_seleccionado else 0
+            index=idx_sector
         )
-    else: # Si no hay sectores para el país seleccionado
-        c8.info(f"No hay sectores definidos para '{pais_input}' en el mapeo.")
-        sector_input = None # Importante: el valor de sector será None
+    else:
+        c8.info(f"No hay sectores definidos para '{pais_input}' en el mapeo cargado.")
+        # sector_input permanece None
 
-    host_id_input = c9.number_input("ID del Anfitrión (host_id)", value=default_property_base['host_id'], step=1)
+    host_id_input = c9.number_input("ID del Anfitrión (host_id)", value=default_property_base['host_id'], step=1, min_value=0)
+
 
     st.write("**Reseñas y Logística:**")
-    # ... (inputs para reviews, rating, checkin_category, checkout_category - COMO ANTES) ...
-    c10, c11, c12 = st.columns(3)
+    c10, c11, c12_a, c12_b = st.columns(4) # Ajustado para dos selectbox en la misma línea visual
     reviews_input = c10.number_input("Número de Reseñas (reviews)", 0, 2000, default_property_base['reviews'])
     rating_input = c11.slider("Calificación Promedio (rating)", 0.0, 5.0, default_property_base['rating'], 0.1)
 
     default_checkin_index = checkin_options.index(default_property_base['checkin_category']) if default_property_base['checkin_category'] in checkin_options else 0
-    checkin_input = c12.selectbox("Categoría Check-in (checkin_category)", checkin_options, index=default_checkin_index)
+    checkin_input = c12_a.selectbox("Categoría Check-in", checkin_options, index=default_checkin_index)
     
     default_checkout_index = checkout_options.index(default_property_base['checkout_category']) if default_property_base['checkout_category'] in checkout_options else 0
-    checkout_input = c12.selectbox("Categoría Check-out (checkout_category)", checkout_options, index=default_checkout_index, key="checkout_cat_key")
+    checkout_input = c12_b.selectbox("Categoría Check-out", checkout_options, index=default_checkout_index, key="checkout_cat_key")
 
 
     if st.button("📈 Predecir Precio Base", key="predict_base_interactive", use_container_width=True):
         if modelo:
-            if sector_input is None and sectores_para_pais_seleccionado:
-                 st.warning("Por favor, seleccione un sector válido.") # O si el país no tiene sectores, manejarlo.
-            elif sector_input is None and not sectores_para_pais_seleccionado:
-                 st.error(f"No se puede predecir: {pais_input} no tiene sectores configurados o el país no está en el mapeo.")
-            else:
+            if not pais_input:
+                st.warning("Por favor, seleccione un país.")
+            elif not sector_input and sectores_para_pais_seleccionado: # Hay opciones de sector pero ninguna seleccionada (no debería pasar con selectbox)
+                st.warning(f"Por favor, seleccione un sector para '{pais_input}'.")
+            elif not sector_input and not sectores_para_pais_seleccionado: # No hay sectores para el país
+                 st.error(f"No se puede predecir: El país '{pais_input}' no tiene sectores configurados en el mapeo o el mapeo no se cargó correctamente.")
+            else: # Tenemos pais y sector
                 input_data = {
                     'bathrooms': bathrooms_input, 'pais': pais_input, 'host_id': host_id_input,
                     'bedrooms': bedrooms_input, 'reviews': reviews_input, 'beds': beds_input,
-                    'sector': sector_input, 'guests': guests_input, # sector_input puede ser None si no se seleccionó
+                    'sector': sector_input, 'guests': guests_input,
                     'checkin_category': checkin_input, 'checkout_category': checkout_input,
                     'rating': rating_input, 'toiles': toiles_input, 'studios': studios_input
                 }
                 
-                # Validar que sector_input no sea None antes de predecir si es un campo obligatorio para el modelo
-                if input_data['sector'] is None:
-                    st.error("El campo 'Sector/Ciudad' es obligatorio y no se ha podido determinar. Verifica el mapeo de país-sector.")
-                else:
-                    input_df = pd.DataFrame([input_data])
-                    try:
-                        prediccion = modelo.predict(input_df)[0]
-                        st.success(f"**Precio Estimado por Noche: COP {prediccion:,.2f}**")
-                        st.session_state.precio_base_simulacion = prediccion
-                        st.session_state.property_base_simulacion = input_data.copy()
-                    except Exception as e:
-                        st.error(f"Error al predecir: {e}")
-                        st.dataframe(input_df)
-                        st.write("Columnas del DataFrame enviado:", input_df.columns.tolist())
+                input_df = pd.DataFrame([input_data])
+                # Asegurar que el orden de las columnas coincide con el entrenamiento del modelo
+                # Esto es crucial. Si el preprocesador espera un orden específico, hay que respetarlo.
+                # O, mejor, si el preprocesador se ajustó con DataFrames, manejará los nombres de columna.
+                try:
+                    prediccion = modelo.predict(input_df)[0]
+                    st.success(f"**Precio Estimado por Noche: COP {prediccion:,.2f}**")
+                    st.session_state.precio_base_simulacion = prediccion
+                    st.session_state.property_base_simulacion = input_data.copy()
+                except Exception as e:
+                    st.error(f"Error al predecir: {e}")
+                    st.error("Asegúrate de que todas las características necesarias por el modelo estén presentes y con los tipos de datos correctos.")
+                    st.dataframe(input_df)
+                    # st.write("Columnas del DataFrame enviado:", input_df.columns.tolist())
+                    # if hasattr(modelo, 'feature_names_in_'):
+                    #     st.write("Características esperadas por el modelo:", modelo.feature_names_in_)
+                    # elif hasattr(modelo.named_steps.get('preprocessor'), 'get_feature_names_out'):
+                    #    st.write("Características después del preprocesamiento:", modelo.named_steps.get('preprocessor').get_feature_names_out())
+
+
         else:
-            st.warning("El modelo no está cargado.")
+            st.warning("El modelo no está cargado. No se puede predecir.")
 
 with col_importance:
     st.subheader("Importancia de las Características")
+    # ... (resto de la sección sin cambios) ...
     st.markdown("Visualización de cómo cada característica influye en la predicción del precio, según el modelo.")
     # Esta data de importancia viene de tu notebook, ya procesada para mostrar columnas originales
     data_importancia_agrupada = {
-        'Original_Column': ['bathrooms', 'pais', 'host_id', 'bedrooms', 'reviews', 'beds', 'sector', 'guests', 'checkin', 'checkout', 'rating', 'toiles', 'studios'],
+        'Original_Column': ['bathrooms', 'pais', 'host_id', 'bedrooms', 'reviews', 'beds', 'sector', 'guests', 'checkin_category', 'checkout_category', 'rating', 'toiles', 'studios'], # Asegúrate que los nombres coincidan con las columnas originales
         'Importance': [0.257116, 0.191497, 0.122024, 0.111934, 0.103072, 0.075089, 0.057227, 0.033455, 0.019237, 0.017591, 0.007317, 0.004440, 0.000000]
-    } # Esta es la que ya tenías, asumo que 'checkin' y 'checkout' son los nombres correctos post-agrupación.
+    }
+    # Renombrar 'checkin' a 'checkin_category' y 'checkout' a 'checkout_category' si es necesario para coincidir
+    for i, col_name in enumerate(data_importancia_agrupada['Original_Column']):
+        if col_name == 'checkin':
+            data_importancia_agrupada['Original_Column'][i] = 'checkin_category'
+        if col_name == 'checkout':
+            data_importancia_agrupada['Original_Column'][i] = 'checkout_category'
+
     df_importancia = pd.DataFrame(data_importancia_agrupada).sort_values(by="Importance", ascending=False)
     
     fig_importancia = px.bar(df_importancia, x="Importance", y="Original_Column", orientation='h',
-                             title="Importancia de Características en el Modelo",
-                             labels={'Importance': 'Importancia Relativa', 'Original_Column': 'Característica'},
-                             color="Importance", color_continuous_scale=px.colors.sequential.Viridis)
+                                title="Importancia de Características en el Modelo",
+                                labels={'Importance': 'Importancia Relativa', 'Original_Column': 'Característica'},
+                                color="Importance", color_continuous_scale=px.colors.sequential.Viridis)
     fig_importancia.update_layout(yaxis={'categoryorder':'total ascending'})
     st.plotly_chart(fig_importancia, use_container_width=True)
 
@@ -296,6 +347,8 @@ st.markdown("---")
 
 # --- Sección de Simulación de Mejoras y Rentabilidad ---
 st.header("🛠️ Simulación de Mejoras y Cálculo de Rentabilidad")
+# ... (resto de la sección sin cambios, asumiendo que `property_base_actual` y las predicciones de escenarios
+#      se manejarán correctamente con `pais` y `sector` válidos de la simulación interactiva) ...
 st.markdown("""
 Aquí puedes simular cómo ciertas mejoras a la propiedad (utilizando la configuración de la sección de predicción interactiva como base)
 podrían afectar el precio por noche y, consecuentemente, la rentabilidad de la inversión.
@@ -321,7 +374,7 @@ else:
 
     if st.button("🏦 Calcular Rentabilidad de Escenarios", key="calculate_roi", use_container_width=True):
         if modelo:
-            base_df_sim = pd.DataFrame([property_base_actual]) # Usar la propiedad base de la simulación interactiva
+            base_df_sim = pd.DataFrame([property_base_actual]) 
 
             # Escenarios de mejora
             property_plus_bathroom_sim = property_base_actual.copy()
@@ -342,11 +395,10 @@ else:
                 price_plus_bedroom_pred = modelo.predict(X_plus_bedroom)[0]
                 price_plus_both_pred = modelo.predict(X_plus_both)[0]
 
-                # Aplicar multiplicadores (lógica de negocio post-predicción de tu notebook)
                 price_base_final = price_base_actual
-                price_plus_bathroom_final = price_plus_bathroom_pred # * 2 (Considera si este multiplicador sigue siendo necesario)
-                price_plus_bedroom_final = price_plus_bedroom_pred   # * 1.5
-                price_plus_both_final = price_plus_both_pred         # * 2.5
+                price_plus_bathroom_final = price_plus_bathroom_pred 
+                price_plus_bedroom_final = price_plus_bedroom_pred  
+                price_plus_both_final = price_plus_both_pred     
 
                 nights_per_year = 365 * occupancy_rate_input
                 scenarios_data = [
@@ -371,11 +423,11 @@ else:
                 results_df = pd.DataFrame(results_list)
                 st.subheader("Resultados de Simulación y Rentabilidad")
                 currency_cols = ['Precio x Noche (COP)', 'Costo Remodelación (COP)', 'Ingreso Anual Bruto (COP)', 'Costo Operativo Anual (COP)', 'Ganancia Neta Anual (COP)', 'Inversión Inicial Total (COP)']
-                for col in currency_cols: results_df[col] = results_df[col].apply(lambda x: f"{x:,.2f}")
+                for col_curr in currency_cols: results_df[col_curr] = results_df[col_curr].apply(lambda x: f"{x:,.2f}")
                 results_df['ROI Anual (%)'] = results_df['ROI Anual (%)'].apply(lambda x: f"{x:.2f}%")
                 st.dataframe(results_df, use_container_width=True)
 
-                results_df_numeric = pd.DataFrame(results_list)
+                results_df_numeric = pd.DataFrame(results_list) # Usar la lista original con números
                 col_chart1, col_chart2 = st.columns(2)
                 with col_chart1:
                     fig_precios = px.bar(results_df_numeric, x='Escenario', y='price_per_night', title='Precio por Noche Predicho por Escenario', labels={'price_per_night': 'Precio por Noche (COP)', 'Escenario': 'Escenario de Mejora'}, color='Escenario', text_auto='.2s')
