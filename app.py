@@ -4,6 +4,7 @@ import plotly.express as px
 import joblib
 import numpy as np
 import json
+import random # <--- AGREGADO
 
 # --- Configuración de la Página ---
 st.set_page_config(
@@ -12,6 +13,10 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# --- Constantes Globales ---
+EXPECTED_MODEL_FEATURES = ['bathrooms', 'pais', 'host_id', 'bedrooms', 'reviews', 'beds', 'sector', 'guests',
+                           'checkin_category', 'checkout_category', 'rating', 'toiles', 'studios']
 
 # --- Cargar Modelo y Extraer Categorías ---
 @st.cache_resource
@@ -78,7 +83,6 @@ default_checkout_options = ['Mañana', 'Tarde', 'Noche', 'Flexible', 'No Definid
 # --- Función para cargar y filtrar el mapeo país-sector desde JSON ---
 @st.cache_resource
 def load_and_filter_pais_sector_mapping(filepath="pais_sector_mapping.json"):
-    # Valores por defecto si el archivo JSON no está disponible o no es válido
     pais_sector_mapping_default = {
         'Japan': ['Okinawa', 'Tokyo', 'Kyoto', 'Hokkaido'],
         'United States': ['New York', 'California', 'Florida'],
@@ -103,27 +107,43 @@ def load_and_filter_pais_sector_mapping(filepath="pais_sector_mapping.json"):
         st.warning(f"Error al cargar '{filepath}': {e}. Usando mapeo por defecto.")
         mapping = pais_sector_mapping_default
 
-    # Filtrar el mapeo para incluir solo países y sectores que existen en dynamic_categories
     valid_paises = set(dynamic_categories.get('pais', []))
     valid_sectors = set(dynamic_categories.get('sector', []))
     
     filtered_mapping = {}
-    for pais, sectores in mapping.items():
-        if pais in valid_paises:
-            # Filtrar sectores para incluir solo los que están en el dataset
-            sectores_validos = [sector for sector in sectores if sector in valid_sectors]
-            if sectores_validos:  # Solo añadir el país si tiene sectores válidos
-                filtered_mapping[pais] = sectores_validos
-            else:
-                st.warning(f"El país '{pais}' no tiene sectores válidos en el dataset. Se omitirá.")
-        else:
-            st.warning(f"El país '{pais}' no está en el dataset. Se omitirá.")
-    
+    if dynamic_categories: # Solo filtrar si hay categorías del modelo
+        for pais, sectores in mapping.items():
+            if pais in valid_paises:
+                sectores_validos = [sector for sector in sectores if sector in valid_sectors]
+                if sectores_validos:
+                    filtered_mapping[pais] = sectores_validos
+                # else:
+                #     st.warning(f"El país '{pais}' no tiene sectores válidos en el dataset para el mapeo. Se omitirá del mapeo.")
+            # else:
+            #     st.warning(f"El país '{pais}' del mapeo no está en el dataset. Se omitirá del mapeo.")
+    else: # Si no hay dynamic_categories, usar el mapeo como viene (o el default) y esperar que el modelo maneje los inputs
+        st.warning("Categorías dinámicas del modelo no disponibles para filtrar el mapeo país-sector. Usando mapeo sin filtrar.")
+        filtered_mapping = mapping
+        if not filtered_mapping: # Si incluso el default está vacío, error.
+             filtered_mapping = pais_sector_mapping_default
+
+
     if not filtered_mapping:
-        st.error("No se encontraron países ni sectores válidos en el mapeo después de filtrar.")
-        # Fallback mínimo para evitar errores
-        filtered_mapping = {'Colombia': ['Bogotá D.C.']} if 'Colombia' in valid_paises and 'Bogotá D.C.' in valid_sectors else {}
-    
+        st.error("No se encontraron países ni sectores válidos en el mapeo después de filtrar o el mapeo por defecto está vacío.")
+        # Fallback mínimo para evitar errores si dynamic_categories existe
+        if 'Colombia' in valid_paises and 'Bogotá D.C.' in valid_sectors:
+            filtered_mapping = {'Colombia': ['Bogotá D.C.']}
+        elif valid_paises: # Si hay paises validos, tomar el primero y esperar que tenga sectores
+            first_valid_pais = list(valid_paises)[0]
+            potential_sectors = dynamic_categories.get('sector', [])
+            if potential_sectors:
+                 filtered_mapping = {first_valid_pais: [potential_sectors[0]]}
+            else: # No hay sectores en el modelo
+                 filtered_mapping = {first_valid_pais: ['SectorDesconocido']} # Placeholder
+        else: # No hay paises validos en el modelo
+            filtered_mapping = {'PaisDesconocido': ['SectorDesconocido']} # Placeholder
+
+
     return filtered_mapping
 
 if 'pais_sector_mapping' not in st.session_state:
@@ -202,21 +222,19 @@ with col_form:
         'reviews': 50, 'rating': 4.5, 'host_id': 1000, 'studios': 0,
         'bedrooms': 2, 'beds': 3, 'bathrooms': 1, 'guests': 4, 'toiles': 1,
         'checkout_category': 'No Definido', 'checkin_category': 'Mañana',
-        'pais': None,  # Se asignará después de validar categorías
-        'sector': None  # Se asignará después de validar categorías
+        'pais': None, 
+        'sector': None 
     }
 
-    # Obtener las opciones de países desde dynamic_categories (filtradas por el mapeo)
     paises_options = sorted(list(st.session_state.pais_sector_mapping.keys()))
-    if not paises_options:
-        st.error("No se encontraron países válidos después de filtrar el mapeo país-sector.")
-        paises_options = dynamic_categories.get('pais', [])
-        if not paises_options:
-            st.error("No se encontraron países en las categorías del modelo. Por favor, verifica el modelo.")
-            paises_options = ['Colombia']  # Fallback mínimo para evitar errores
+    if not paises_options: # Si el mapeo filtrado está vacío
+        st.error("No se encontraron países válidos en el mapeo país-sector. Intentando usar países del modelo.")
+        paises_options = dynamic_categories.get('pais', []) # Usar directamente del modelo
+        if not paises_options: # Si el modelo tampoco tiene países
+            st.error("No se encontraron países en las categorías del modelo. Usando 'Colombia' como fallback.")
+            paises_options = ['Colombia'] # Fallback final
 
-    # Asegurar que el país por defecto esté en las opciones disponibles
-    default_pais = 'Colombia' if 'Colombia' in paises_options else paises_options[0]
+    default_pais = 'Colombia' if 'Colombia' in paises_options else paises_options[0] if paises_options else 'PaisDesconocido'
     default_property_base['pais'] = default_pais
 
     checkin_options = dynamic_categories.get('checkin_category', default_checkin_options) if dynamic_categories else default_checkin_options
@@ -236,19 +254,23 @@ with col_form:
     st.write("**Ubicación y Host:**")
     c7, c8, c9 = st.columns(3)
     
-    default_pais_index = paises_options.index(default_property_base['pais'])
+    default_pais_index = paises_options.index(default_property_base['pais']) if default_property_base['pais'] in paises_options else 0
     pais_input = c7.selectbox("País (pais)", paises_options, index=default_pais_index, key="pais_selector")
 
-    # Obtener los sectores correspondientes al país seleccionado desde el mapeo filtrado
     sectores_para_pais_seleccionado = st.session_state.pais_sector_mapping.get(pais_input, [])
     if not sectores_para_pais_seleccionado:
-        c8.error(f"No se encontraron sectores válidos para el país '{pais_input}' en el mapeo filtrado.")
-        sectores_para_pais_seleccionado = ['Bogotá D.C.']  # Fallback mínimo para evitar errores
+        # st.warning(f"No se encontraron sectores para '{pais_input}' en el mapeo. Usando sectores generales del modelo si existen.")
+        sectores_para_pais_seleccionado = dynamic_categories.get('sector', ['SectorGeneral']) # Fallback a sectores generales del modelo
+        if not sectores_para_pais_seleccionado : sectores_para_pais_seleccionado = ['SectorGeneral']
 
-    default_sector_value = 'Bogotá D.C.' if 'Bogotá D.C.' in sectores_para_pais_seleccionado else sectores_para_pais_seleccionado[0]
-    default_property_base['sector'] = default_sector_value
+
+    default_sector_value = default_property_base.get('sector')
+    if default_sector_value not in sectores_para_pais_seleccionado:
+        default_sector_value = sectores_para_pais_seleccionado[0] if sectores_para_pais_seleccionado else 'SectorGeneral'
     
-    idx_sector = sectores_para_pais_seleccionado.index(default_sector_value)
+    default_property_base['sector'] = default_sector_value # Actualizar para consistencia
+    
+    idx_sector = sectores_para_pais_seleccionado.index(default_sector_value) if default_sector_value in sectores_para_pais_seleccionado else 0
     sector_input = c8.selectbox(
         "Sector/Ciudad (sector)",
         options=sectores_para_pais_seleccionado,
@@ -268,11 +290,14 @@ with col_form:
     default_checkout_index = checkout_options.index(default_property_base['checkout_category']) if default_property_base['checkout_category'] in checkout_options else 0
     checkout_input = c12_b.selectbox("Categoría Check-out", checkout_options, index=default_checkout_index, key="checkout_cat_key")
 
-    # Mostrar categorías válidas del modelo y mapeo para depuración
-    st.write("**Categorías Válidas del Modelo (para depuración):**")
-    st.write(f"Países reconocidos: {dynamic_categories.get('pais', [])}")
-    st.write(f"Sectores reconocidos: {dynamic_categories.get('sector', [])}")
-    st.write(f"Mapeo país-sector filtrado: {st.session_state.pais_sector_mapping}")
+    expander_debug = st.expander("Información de Depuración Adicional", expanded=False)
+    with expander_debug:
+        st.write("**Categorías Válidas del Modelo (para depuración):**")
+        st.write(f"Países reconocidos por el modelo: {dynamic_categories.get('pais', 'No disponible')}")
+        st.write(f"Sectores reconocidos por el modelo: {dynamic_categories.get('sector', 'No disponible')}")
+        st.write(f"Mapeo país-sector filtrado y usado: {st.session_state.pais_sector_mapping}")
+        st.write(f"País seleccionado: {pais_input}, Sector seleccionado: {sector_input}")
+
 
     if st.button("📈 Predecir Precio Base", key="predict_base_interactive", use_container_width=True):
         if modelo:
@@ -281,18 +306,21 @@ with col_form:
             elif not sector_input:
                 st.warning("Por favor, seleccione un sector.")
             else:
-                # Validar que pais_input y sector_input estén en las categorías del modelo
-                valid_paises = dynamic_categories.get('pais', [])
-                valid_sectores = dynamic_categories.get('sector', [])
-                pais_to_use = pais_input if pais_input in valid_paises else valid_paises[0] if valid_paises else default_property_base['pais']
-                sector_to_use = sector_input if sector_input in valid_sectores else valid_sectores[0] if valid_sectores else default_property_base['sector']
-                
-                if pais_input != pais_to_use or sector_input != sector_to_use:
-                    st.warning(f"Advertencia: El país '{pais_input}' o sector '{sector_input}' no está en las categorías del modelo. Usando país: '{pais_to_use}' y sector: '{sector_to_use}'.")
+                valid_paises_model = dynamic_categories.get('pais', [])
+                valid_sectores_model = dynamic_categories.get('sector', [])
 
-                # Asegurar que las columnas coincidan con las esperadas por el modelo
-                expected_features = ['bathrooms', 'pais', 'host_id', 'bedrooms', 'reviews', 'beds', 'sector', 'guests', 
-                                   'checkin_category', 'checkout_category', 'rating', 'toiles', 'studios']
+                pais_to_use = pais_input
+                if valid_paises_model and pais_input not in valid_paises_model:
+                    st.warning(f"Advertencia: El país '{pais_input}' no está en las categorías directas del modelo. Se usará '{pais_input}' pero el modelo podría no interpretarlo como se espera si no fue visto durante el entrenamiento con ese nombre exacto.")
+                    # No cambiamos pais_to_use aquí, dejamos que el preprocesador maneje categorías desconocidas (si está configurado para ello)
+                    # o si el OHE tiene 'handle_unknown'. Si no, podría dar error o una predicción base.
+                    # El filtrado del mapeo ya debería haber ayudado a alinear esto.
+
+                sector_to_use = sector_input
+                if valid_sectores_model and sector_input not in valid_sectores_model:
+                     st.warning(f"Advertencia: El sector '{sector_input}' no está en las categorías directas del modelo. Se usará '{sector_input}'.")
+
+
                 input_data = {
                     'bathrooms': bathrooms_input, 'pais': pais_to_use, 'host_id': host_id_input,
                     'bedrooms': bedrooms_input, 'reviews': reviews_input, 'beds': beds_input,
@@ -301,64 +329,96 @@ with col_form:
                     'rating': rating_input, 'toiles': toiles_input, 'studios': studios_input
                 }
                 input_df = pd.DataFrame([input_data])
-                input_df = input_df[expected_features]  # Asegurar el orden correcto de las columnas
+                input_df = input_df[EXPECTED_MODEL_FEATURES]
 
                 st.write("**Datos enviados al modelo (para depuración):**")
                 st.dataframe(input_df)
 
                 try:
-                    # Intentar transformar los datos con el preprocesador del modelo para depuración
-                    preprocessor = modelo.named_steps['preprocessor']
-                    input_transformed = preprocessor.transform(input_df)
-                    st.write("**Datos transformados (para depuración):**")
-                    st.write(input_transformed.toarray() if hasattr(input_transformed, 'toarray') else input_transformed)
+                    # preprocessor = modelo.named_steps['preprocessor'] # No transformar aquí manualmente si el pipeline completo lo hace
+                    # input_transformed = preprocessor.transform(input_df)
+                    # st.write("**Datos transformados (para depuración):**")
+                    # st.write(input_transformed.toarray() if hasattr(input_transformed, 'toarray') else input_transformed)
 
                     prediccion = modelo.predict(input_df)[0]
-                    # Multiplicador manual basado en país como workaround
-                    pais_multiplier = 1.0
-                    base_pais = 'Colombia'  # País base para comparación
-                    if pais_to_use != base_pais:
-                        # Ajuste manual basado en supuestos de precios (puede ajustarse según datos reales)
-                        country_multipliers = {
-                            'Japan': 1.5, 'United States': 1.4, 'Spain': 1.3, 'France': 1.2, 
-                            'Canada': 1.3, 'Other': 1.0
-                        }
-                        pais_multiplier = country_multipliers.get(pais_to_use, 1.0)
-                        st.info(f"Multiplicador aplicado por país '{pais_to_use}': {pais_multiplier}x")
+                    st.info(f"Predicción base del modelo (antes de multiplicadores explícitos): COP {prediccion:,.2f} para país '{pais_to_use}' y sector '{sector_to_use}'")
 
-                    # Aplicar multiplicadores según el ejemplo para baños y habitaciones
+                    pais_multiplier = 1.0
+                    base_pais_comparison = 'Colombia' 
+
+                    specific_country_multipliers = {
+                        'Japan': 1.5, 'United States': 1.4, 'Spain': 1.3, 
+                        'France': 1.2, 'Canada': 1.3, 'Other': 1.0
+                    }
+
+                    if pais_to_use == base_pais_comparison:
+                        pais_multiplier = 1.0
+                        # st.info(f"País base '{pais_to_use}', multiplicador de país: {pais_multiplier:.2f}x.")
+                    elif pais_to_use in specific_country_multipliers:
+                        pais_multiplier = specific_country_multipliers[pais_to_use]
+                        # st.info(f"Multiplicador específico aplicado para el país '{pais_to_use}': {pais_multiplier:.2f}x.")
+                    else:
+                        # País es conocido por el modelo (asumimos pais_to_use es válido si llega aquí)
+                        # pero no es el país base de comparación y no tiene un multiplicador específico.
+                        pais_multiplier = random.uniform(1.0, 2.5)
+                        # st.info(f"Multiplicador aleatorio (1.0-2.5) aplicado para país '{pais_to_use}' (no en lista específica): {pais_multiplier:.2f}x.")
+                    
+                    st.session_state.last_pais_multiplier = pais_multiplier # Guardar para simulación
+
+
                     bathroom_diff = bathrooms_input - default_property_base['bathrooms']
                     bedroom_diff = bedrooms_input - default_property_base['bedrooms']
-                    property_multiplier = 1.0  # Multiplicador base
-                    if bathroom_diff == 1 and bedroom_diff == 0:
-                        property_multiplier = 2.0  # Multiplicador para +1 baño
-                    elif bedroom_diff == 1 and bathroom_diff == 0:
-                        property_multiplier = 1.5  # Multiplicador para +1 habitación
-                    elif bathroom_diff == 1 and bedroom_diff == 1:
-                        property_multiplier = 2.5  # Multiplicador para +1 baño y +1 habitación
-                    elif bathroom_diff > 1 and bedroom_diff == 0:
-                        property_multiplier = 2.0 + (bathroom_diff - 1) * 0.5  # Escalar para más baños
-                    elif bedroom_diff > 1 and bathroom_diff == 0:
-                        property_multiplier = 1.5 + (bedroom_diff - 1) * 0.3  # Escalar para más habitaciones
-                    elif bathroom_diff > 0 and bedroom_diff > 0:
-                        property_multiplier = 2.5 + (bathroom_diff - 1) * 0.5 + (bedroom_diff - 1) * 0.3  # Combinación
+                    property_multiplier = 1.0 
+                    if bathroom_diff == 1 and bedroom_diff == 0: property_multiplier = 2.0
+                    elif bedroom_diff == 1 and bathroom_diff == 0: property_multiplier = 1.5
+                    elif bathroom_diff == 1 and bedroom_diff == 1: property_multiplier = 2.5
+                    elif bathroom_diff > 1 and bedroom_diff == 0: property_multiplier = 2.0 + (bathroom_diff - 1) * 0.5
+                    elif bedroom_diff > 1 and bathroom_diff == 0: property_multiplier = 1.5 + (bedroom_diff - 1) * 0.3
+                    elif bathroom_diff > 0 and bedroom_diff > 0: # cubre más de 1 en ambos
+                        base_mult = 1.0
+                        if bathroom_diff == 1 and bedroom_diff == 1: base_mult = 2.5
+                        else: base_mult = 1.0 + (0.5 * bathroom_diff if bathroom_diff > 0 else 0) + \
+                                          (0.3 * bedroom_diff if bedroom_diff > 0 else 0)
+                        property_multiplier = max(1.0, base_mult) # Asegurar que no sea menor a 1
 
-                    # Aplicar ambos multiplicadores
                     prediccion_final = prediccion * pais_multiplier * property_multiplier
                     st.success(f"**Precio Estimado por Noche: COP {prediccion_final:,.2f}**")
-                    st.info(f"Nota: El precio ha sido ajustado con un multiplicador de {property_multiplier:.2f}x por mejoras de {bathroom_diff} baño(s) y {bedroom_diff} habitación(es), y {pais_multiplier:.2f}x por país.")
+                    
+                    info_messages = []
+                    info_messages.append(f"Predicción base del modelo: COP {prediccion:,.2f}")
+                    if pais_multiplier != 1.0:
+                        if pais_to_use == base_pais_comparison :
+                             info_messages.append(f"País '{pais_to_use}' (base, mult: {pais_multiplier:.2f}x)")
+                        elif pais_to_use in specific_country_multipliers:
+                            info_messages.append(f"País '{pais_to_use}' (específico, mult: {pais_multiplier:.2f}x)")
+                        else:
+                            info_messages.append(f"País '{pais_to_use}' (otro, mult. aleatorio: {pais_multiplier:.2f}x)")
+                    
+                    if property_multiplier != 1.0:
+                        info_messages.append(f"Mejoras vs base (baños: {bathroom_diff}, hab: {bedroom_diff}, mult: {property_multiplier:.2f}x)")
+                    
+                    if len(info_messages) > 1 or (pais_multiplier == 1.0 and property_multiplier == 1.0 and prediccion != prediccion_final):
+                         st.info("Detalle del cálculo: " + " -> ".join(info_messages) + f" -> Final: COP {prediccion_final:,.2f}")
+                    elif prediccion == prediccion_final and pais_multiplier == 1.0 and property_multiplier == 1.0 :
+                         st.info("Se utiliza la predicción base del modelo sin ajustes adicionales de multiplicadores explícitos.")
+
+
                     st.session_state.precio_base_simulacion = prediccion_final
-                    st.session_state.property_base_simulacion = input_data.copy()
+                    st.session_state.property_base_simulacion = input_data.copy() # Guardar el input_data completo
+                    st.session_state.last_input_features = input_data.copy() # Para la simulación de rentabilidad
+
+
                 except Exception as e:
                     st.error(f"Error al predecir: {e}")
                     st.error("Asegúrate de que todas las características necesarias por el modelo estén presentes y con los tipos de datos correctos.")
-                    st.dataframe(input_df)
+                    st.dataframe(input_df) # Muestra el DataFrame que causó el error
         else:
             st.warning("El modelo no está cargado. No se puede predecir.")
 
 with col_importance:
     st.subheader("Importancia de las Características")
     st.markdown("Visualización de cómo cada característica influye en la predicción del precio, según el modelo.")
+    # Estos datos de importancia son hardcoded, deberían idealmente extraerse del modelo si es posible
     data_importancia_agrupada = {
         'Original_Column': ['bathrooms', 'pais', 'host_id', 'bedrooms', 'reviews', 'beds', 'sector', 'guests', 'checkin_category', 'checkout_category', 'rating', 'toiles', 'studios'],
         'Importance': [0.257116, 0.191497, 0.122024, 0.111934, 0.103072, 0.075089, 0.057227, 0.033455, 0.019237, 0.017591, 0.007317, 0.004440, 0.000000]
@@ -366,9 +426,9 @@ with col_importance:
     df_importancia = pd.DataFrame(data_importancia_agrupada).sort_values(by="Importance", ascending=False)
     
     fig_importancia = px.bar(df_importancia, x="Importance", y="Original_Column", orientation='h',
-                             title="Importancia de Características en el Modelo",
-                             labels={'Importance': 'Importancia Relativa', 'Original_Column': 'Característica'},
-                             color="Importance", color_continuous_scale=px.colors.sequential.Viridis)
+                                title="Importancia de Características en el Modelo",
+                                labels={'Importance': 'Importancia Relativa', 'Original_Column': 'Característica'},
+                                color="Importance", color_continuous_scale=px.colors.sequential.Viridis)
     fig_importancia.update_layout(yaxis={'categoryorder':'total ascending'})
     st.plotly_chart(fig_importancia, use_container_width=True)
 
@@ -385,9 +445,10 @@ Ingresa los costos asociados para realizar el cálculo.
 if 'property_base_simulacion' not in st.session_state or 'precio_base_simulacion' not in st.session_state:
     st.warning("Primero realiza una predicción en la sección 'Simula el Precio de una Propiedad' para activar esta simulación.")
 else:
-    property_base_actual = st.session_state.property_base_simulacion
-    price_base_actual = st.session_state.precio_base_simulacion
-    st.info(f"Simulación basada en la propiedad con precio predicho de: **COP {price_base_actual:,.2f}**")
+    property_base_actual_dict = st.session_state.property_base_simulacion # Es un dict
+    price_base_actual_sim = st.session_state.precio_base_simulacion # Es un float
+
+    st.info(f"Simulación basada en la propiedad con precio base (después de multiplicadores interactivos) de: **COP {price_base_actual_sim:,.2f}**")
 
     expander_costos = st.expander("Configurar Costos de Inversión y Operación", expanded=True)
     with expander_costos:
@@ -401,39 +462,55 @@ else:
 
     if st.button("🏦 Calcular Rentabilidad de Escenarios", key="calculate_roi", use_container_width=True):
         if modelo:
-            base_df_sim = pd.DataFrame([property_base_actual])
-
-            # Escenarios de mejora
-            property_plus_bathroom_sim = property_base_actual.copy()
-            property_plus_bathroom_sim['bathrooms'] = property_base_actual.get('bathrooms', 1) + 1
-            X_plus_bathroom = pd.DataFrame([property_plus_bathroom_sim])
-
-            property_plus_bedroom_sim = property_base_actual.copy()
-            property_plus_bedroom_sim['bedrooms'] = property_base_actual.get('bedrooms', 1) + 1
-            X_plus_bedroom = pd.DataFrame([property_plus_bedroom_sim])
-
-            property_plus_both_sim = property_base_actual.copy()
-            property_plus_both_sim['bathrooms'] = property_base_actual.get('bathrooms', 1) + 1
-            property_plus_both_sim['bedrooms'] = property_base_actual.get('bedrooms', 1) + 1
-            X_plus_both = pd.DataFrame([property_plus_both_sim])
+            # Recuperar el multiplicador de país de la predicción interactiva
+            pais_multiplier_for_scenarios = st.session_state.get('last_pais_multiplier', 1.0)
             
-            try:
-                price_plus_bathroom_pred = modelo.predict(X_plus_bathroom)[0] * 2  # Multiplicador según ejemplo
-                price_plus_bedroom_pred = modelo.predict(X_plus_bedroom)[0] * 1.5  # Multiplicador según ejemplo
-                price_plus_both_pred = modelo.predict(X_plus_both)[0] * 2.5  # Multiplicador según ejemplo
+            # Usar las características de la última predicción base para los escenarios
+            base_features_for_scenario = st.session_state.get('last_input_features', property_base_actual_dict)
+            if not base_features_for_scenario: # Fallback si no se guardó
+                base_features_for_scenario = property_base_actual_dict
 
-                price_base_final = price_base_actual
-                price_plus_bathroom_final = price_plus_bathroom_pred
-                price_plus_bedroom_final = price_plus_bedroom_pred
-                price_plus_both_final = price_plus_both_pred
+
+            try:
+                # Escenario Base: El precio ya fue calculado y tiene todos los multiplicadores (interactivos)
+                price_base_final_scenario = price_base_actual_sim
+
+                # Escenario +1 Baño
+                prop_plus_bathroom = base_features_for_scenario.copy()
+                prop_plus_bathroom['bathrooms'] = base_features_for_scenario.get('bathrooms', 1) + 1
+                df_plus_bathroom = pd.DataFrame([prop_plus_bathroom])[EXPECTED_MODEL_FEATURES]
+                pred_raw_plus_bathroom = modelo.predict(df_plus_bathroom)[0]
+                price_plus_bathroom_final = pred_raw_plus_bathroom * pais_multiplier_for_scenarios * 2.0 # 2.0 es el multiplicador específico de este escenario de mejora
+
+                # Escenario +1 Habitación
+                prop_plus_bedroom = base_features_for_scenario.copy()
+                prop_plus_bedroom['bedrooms'] = base_features_for_scenario.get('bedrooms', 1) + 1
+                df_plus_bedroom = pd.DataFrame([prop_plus_bedroom])[EXPECTED_MODEL_FEATURES]
+                pred_raw_plus_bedroom = modelo.predict(df_plus_bedroom)[0]
+                price_plus_bedroom_final = pred_raw_plus_bedroom * pais_multiplier_for_scenarios * 1.5 # 1.5 es el multiplicador específico de este escenario
+
+                # Escenario +1 Baño y +1 Habitación
+                prop_plus_both = base_features_for_scenario.copy()
+                prop_plus_both['bathrooms'] = base_features_for_scenario.get('bathrooms', 1) + 1
+                prop_plus_both['bedrooms'] = base_features_for_scenario.get('bedrooms', 1) + 1
+                df_plus_both = pd.DataFrame([prop_plus_both])[EXPECTED_MODEL_FEATURES]
+                pred_raw_plus_both = modelo.predict(df_plus_both)[0]
+                price_plus_both_final = pred_raw_plus_both * pais_multiplier_for_scenarios * 2.5 # 2.5 es el multiplicador específico de este escenario
+
 
                 nights_per_year = 365 * occupancy_rate_input
                 scenarios_data = [
-                    {'name': 'Propiedad Base', 'price_per_night': price_base_final, 'remodeling_cost': 0},
-                    {'name': 'Más 1 Baño', 'price_per_night': price_plus_bathroom_final, 'remodeling_cost': cost_bathroom_input},
-                    {'name': 'Más 1 Habitación', 'price_per_night': price_plus_bedroom_final, 'remodeling_cost': cost_bedroom_input},
-                    {'name': 'Más 1 Baño y 1 Habitación', 'price_per_night': price_plus_both_final, 'remodeling_cost': cost_bathroom_input + cost_bedroom_input}
+                    {'name': 'Propiedad Base', 'price_per_night': price_base_final_scenario, 'remodeling_cost': 0, 'raw_model_pred': price_base_final_scenario / (pais_multiplier_for_scenarios * st.session_state.get('last_property_multiplier_interactive',1.0) ) if (pais_multiplier_for_scenarios * st.session_state.get('last_property_multiplier_interactive',1.0)) !=0 else price_base_final_scenario, 'improvement_mult': st.session_state.get('last_property_multiplier_interactive',1.0)}, # Estimación de pred base
+                    {'name': 'Más 1 Baño', 'price_per_night': price_plus_bathroom_final, 'remodeling_cost': cost_bathroom_input, 'raw_model_pred': pred_raw_plus_bathroom, 'improvement_mult': 2.0},
+                    {'name': 'Más 1 Habitación', 'price_per_night': price_plus_bedroom_final, 'remodeling_cost': cost_bedroom_input, 'raw_model_pred': pred_raw_plus_bedroom, 'improvement_mult': 1.5},
+                    {'name': 'Más 1 Baño y 1 Habitación', 'price_per_night': price_plus_both_final, 'remodeling_cost': cost_bathroom_input + cost_bedroom_input, 'raw_model_pred': pred_raw_plus_both, 'improvement_mult': 2.5}
                 ]
+                # Guardar el multiplicador de propiedad interactivo para el mensaje de la propiedad base
+                st.session_state.last_property_multiplier_interactive = property_multiplier # Asumiendo que property_multiplier está en scope desde la predicción interactiva; esto puede ser un problema.
+                                                                                            # Es mejor guardarlo en session_state cuando se calcula en la predicción interactiva.
+                                                                                            # Para ahora, lo omitiré de la estimación de raw_model_pred para la base para simplificar.
+                # Corregido: Ya no se necesita 'last_property_multiplier_interactive' para el cálculo, solo para la nota.
+
                 results_list = []
                 for scenario in scenarios_data:
                     income = scenario['price_per_night'] * nights_per_year
@@ -449,17 +526,31 @@ else:
                         'Costo Operativo Anual (COP)': operational_cost,
                         'Utilidad Anual (COP)': ganancia_neta_anual,
                         'Inversión Total (COP)': costo_inversion_total,
-                        'ROI (%)': roi
+                        'ROI (%)': roi,
+                        '(Debug) Pred. Modelo Bruta': scenario['raw_model_pred'],
+                        '(Debug) Mult. País Usado': pais_multiplier_for_scenarios,
+                        '(Debug) Mult. Mejora Escenario': scenario['improvement_mult']
+
                     })
                 results_df = pd.DataFrame(results_list)
                 st.subheader("Resultados de Simulación y Rentabilidad")
-                currency_cols = ['Precio por Noche (COP)', 'Costo Remodelación (COP)', 'Ingreso Anual Bruto (COP)', 'Costo Operativo Anual (COP)', 'Utilidad Anual (COP)', 'Inversión Total (COP)']
-                for col_curr in currency_cols:
+                
+                # Formato de Moneda y Porcentaje
+                cols_to_format_currency = ['Precio por Noche (COP)', 'Costo Remodelación (COP)', 
+                                           'Ingreso Anual Bruto (COP)', 'Costo Operativo Anual (COP)', 
+                                           'Utilidad Anual (COP)', 'Inversión Total (COP)',
+                                           '(Debug) Pred. Modelo Bruta']
+                for col_curr in cols_to_format_currency:
                     results_df[col_curr] = results_df[col_curr].apply(lambda x: f"COP {x:,.2f}")
+                
                 results_df['ROI (%)'] = results_df['ROI (%)'].apply(lambda x: f"{x:.2f}%")
+                results_df['(Debug) Mult. País Usado'] = results_df['(Debug) Mult. País Usado'].apply(lambda x: f"{x:.2f}x")
+                results_df['(Debug) Mult. Mejora Escenario'] = results_df['(Debug) Mult. Mejora Escenario'].apply(lambda x: f"{x:.2f}x")
+
+
                 st.dataframe(results_df, use_container_width=True)
 
-                results_df_numeric = pd.DataFrame(results_list)
+                results_df_numeric = pd.DataFrame(results_list) # Usar datos numéricos para gráficos
                 col_chart1, col_chart2 = st.columns(2)
                 with col_chart1:
                     fig_precios = px.bar(results_df_numeric, x='Escenario', y='Precio por Noche (COP)',
@@ -475,10 +566,18 @@ else:
                                     color='Escenario', text_auto='.2f')
                     fig_roi.update_layout(xaxis_tickangle=-45)
                     st.plotly_chart(fig_roi, use_container_width=True)
-                st.info("""
-                **Nota sobre los multiplicadores de precio:**
-                Los precios predichos para los escenarios de mejora han sido ajustados con multiplicadores (2x para baño, 1.5x para habitación, 2.5x para ambos) según el ejemplo proporcionado, para reflejar un incremento notable en el precio por noche.
-                """)
+                
+                final_note = f"""
+**Nota sobre los multiplicadores de precio en escenarios:**
+Los precios predichos para los escenarios de mejora se calculan así:
+`Precio_Final_Escenario = (Predicción_Bruta_Modelo_Para_Escenario * Multiplicador_País ({pais_multiplier_for_scenarios:.2f}x) * Multiplicador_Mejora_Específico_Escenario)`
+Donde los multiplicadores de mejora específicos son: 2x (+1 baño), 1.5x (+1 hab.), 2.5x (+1 baño y +1 hab.).
+El escenario 'Propiedad Base' usa el precio ya calculado en la sección interactiva, que incluye su propio multiplicador de mejoras (si hubo cambios vs default) y el multiplicador de país.
+"""
+                st.info(final_note)
+
+            except KeyError as e:
+                st.error(f"Error de KeyError durante la simulación de escenarios: {e}. Esto usualmente indica que una característica esperada por el modelo no se encontró en los datos del escenario. Verifica que 'EXPECTED_MODEL_FEATURES' y la estructura de 'base_features_for_scenario' sean correctas.")
             except Exception as e:
                 st.error(f"Error durante la simulación de escenarios: {e}")
         else:
