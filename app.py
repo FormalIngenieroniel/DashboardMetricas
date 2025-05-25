@@ -275,6 +275,9 @@ with col_form:
                 if pais_input != pais_to_use or sector_input != sector_to_use:
                     st.warning(f"Advertencia: El país '{pais_input}' o sector '{sector_input}' no está en las categorías del modelo. Usando país: '{pais_to_use}' y sector: '{sector_to_use}'.")
 
+                # Asegurar que las columnas coincidan con las esperadas por el modelo
+                expected_features = ['bathrooms', 'pais', 'host_id', 'bedrooms', 'reviews', 'beds', 'sector', 'guests', 
+                                   'checkin_category', 'checkout_category', 'rating', 'toiles', 'studios']
                 input_data = {
                     'bathrooms': bathrooms_input, 'pais': pais_to_use, 'host_id': host_id_input,
                     'bedrooms': bedrooms_input, 'reviews': reviews_input, 'beds': beds_input,
@@ -282,33 +285,53 @@ with col_form:
                     'checkin_category': checkin_input, 'checkout_category': checkout_input,
                     'rating': rating_input, 'toiles': toiles_input, 'studios': studios_input
                 }
-                
                 input_df = pd.DataFrame([input_data])
+                input_df = input_df[expected_features]  # Asegurar el orden correcto de las columnas
+
                 st.write("**Datos enviados al modelo (para depuración):**")
                 st.dataframe(input_df)
 
                 try:
+                    # Intentar transformar los datos con el preprocesador del modelo para depuración
+                    preprocessor = modelo.named_steps['preprocessor']
+                    input_transformed = preprocessor.transform(input_df)
+                    st.write("**Datos transformados (para depuración):**")
+                    st.write(input_transformed.toarray() if hasattr(input_transformed, 'toarray') else input_transformed)
+
                     prediccion = modelo.predict(input_df)[0]
+                    # Multiplicador manual basado en país como workaround
+                    pais_multiplier = 1.0
+                    base_pais = 'Colombia'  # País base para comparación
+                    if pais_to_use != base_pais:
+                        # Ajuste manual basado en supuestos de precios (puede ajustarse según datos reales)
+                        country_multipliers = {
+                            'Japan': 1.5, 'United States': 1.4, 'Spain': 1.3, 'France': 1.2, 
+                            'Congo': 0.8, 'Austria': 1.3, 'Other': 1.0
+                        }
+                        pais_multiplier = country_multipliers.get(pais_to_use, 1.0)
+                        st.info(f"Multiplicador aplicado por país '{pais_to_use}': {pais_multiplier}x")
+
                     # Aplicar multiplicadores según el ejemplo para baños y habitaciones
                     bathroom_diff = bathrooms_input - default_property_base['bathrooms']
                     bedroom_diff = bedrooms_input - default_property_base['bedrooms']
-                    multiplier = 1.0  # Multiplicador base
+                    property_multiplier = 1.0  # Multiplicador base
                     if bathroom_diff == 1 and bedroom_diff == 0:
-                        multiplier = 2.0  # Multiplicador para +1 baño
+                        property_multiplier = 2.0  # Multiplicador para +1 baño
                     elif bedroom_diff == 1 and bathroom_diff == 0:
-                        multiplier = 1.5  # Multiplicador para +1 habitación
+                        property_multiplier = 1.5  # Multiplicador para +1 habitación
                     elif bathroom_diff == 1 and bedroom_diff == 1:
-                        multiplier = 2.5  # Multiplicador para +1 baño y +1 habitación
+                        property_multiplier = 2.5  # Multiplicador para +1 baño y +1 habitación
                     elif bathroom_diff > 1 and bedroom_diff == 0:
-                        multiplier = 2.0 + (bathroom_diff - 1) * 0.5  # Escalar para más baños
+                        property_multiplier = 2.0 + (bathroom_diff - 1) * 0.5  # Escalar para más baños
                     elif bedroom_diff > 1 and bathroom_diff == 0:
-                        multiplier = 1.5 + (bedroom_diff - 1) * 0.3  # Escalar para más habitaciones
+                        property_multiplier = 1.5 + (bedroom_diff - 1) * 0.3  # Escalar para más habitaciones
                     elif bathroom_diff > 0 and bedroom_diff > 0:
-                        multiplier = 2.5 + (bathroom_diff - 1) * 0.5 + (bedroom_diff - 1) * 0.3  # Combinación
-                    # Aplicar el multiplicador a la predicción
-                    prediccion_final = prediccion * multiplier
+                        property_multiplier = 2.5 + (bathroom_diff - 1) * 0.5 + (bedroom_diff - 1) * 0.3  # Combinación
+
+                    # Aplicar ambos multiplicadores
+                    prediccion_final = prediccion * pais_multiplier * property_multiplier
                     st.success(f"**Precio Estimado por Noche: COP {prediccion_final:,.2f}**")
-                    st.info(f"Nota: El precio ha sido ajustado con un multiplicador de {multiplier:.2f}x basado en las mejoras de {bathroom_diff} baño(s) y {bedroom_diff} habitación(es).")
+                    st.info(f"Nota: El precio ha sido ajustado con un multiplicador de {property_multiplier:.2f}x por mejoras de {bathroom_diff} baño(s) y {bedroom_diff} habitación(es), y {pais_multiplier:.2f}x por país.")
                     st.session_state.precio_base_simulacion = prediccion_final
                     st.session_state.property_base_simulacion = input_data.copy()
                 except Exception as e:
