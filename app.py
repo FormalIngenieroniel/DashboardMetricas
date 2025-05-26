@@ -376,16 +376,8 @@ with col_form:
                     if pais_escalador != 1.0 or (pais_to_use != base_pais_comparison and pais_to_use not in specific_country_escalado) : # Siempre mostrar info del país si es relevante
                         info_messages.append(mensaje_tipo_escalado)
                     
-                    if property_escalador != 1.0:
-                        
-                    
                     final_calc_str = " -> ".join(info_messages)
-                    if prediccion_final != prediccion : # Solo mostrar si hubo algún ajuste
-
-                    elif property_escalador == 1.0 and pais_escalador == 1.0:
-                         st.info("Se realiz la prediccion con exito.")
-
-
+                    
                     st.session_state.precio_base_simulacion = prediccion_final
                     st.session_state.property_base_simulacion = input_data.copy()
                     st.session_state.last_input_features = input_data.copy()
