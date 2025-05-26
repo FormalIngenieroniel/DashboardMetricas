@@ -337,16 +337,16 @@ with col_form:
                     mensaje_tipo_escalado = ""
                     if pais_to_use == base_pais_comparison:
                         pais_escalador = 1.0
-                        mensaje_tipo_escalado = f"País '{pais_to_use}' (base, mult: {pais_escalador:.2f}x)"
+                        mensaje_tipo_escalado = f"Nuevo País seleccionado y calculado exitosamente"
                     elif pais_to_use in specific_country_escalado:
                         pais_escalador = specific_country_escalado[pais_to_use]
-                        mensaje_tipo_escalado = f"País '{pais_to_use}' (específico, mult: {pais_escalador:.2f}x)"
+                        mensaje_tipo_escalado = f"Nuevo País seleccionado y calculado exitosamente"
                     else: # País elegible para escalador seleccionado
                         if pais_to_use not in st.session_state.escalador_pais:
                             st.session_state.escalador_pais[pais_to_use] = random.uniform(1.0, 2.5)
-                            st.toast(f"Nuevo escalador seleccionado ({st.session_state.escalador_pais[pais_to_use]:.2f}x) generado para {pais_to_use}.", icon="✨")
+                            st.toast(f"Nuevos valores generados con exito.", icon="✨")
                         pais_escalador = st.session_state.escalador_pais[pais_to_use]
-                        mensaje_tipo_escalado = f"País '{pais_to_use}' (otro, mult. seleccionado guardado: {pais_escalador:.2f}x)"
+                        mensaje_tipo_escalado = f"Nuevo País seleccionado y calculado exitosamente"
                     
                     st.session_state.ultimo_escalador_pais = pais_escalador
 
@@ -545,15 +545,6 @@ else:
                                     color='Escenario', text_auto='.2f')
                     fig_roi.update_layout(xaxis_tickangle=-45)
                     st.plotly_chart(fig_roi, use_container_width=True)
-
-                final_note_text = f"""
-**Nota sobre los escaladores de precio en escenarios:**
-Los precios para escenarios de mejora se calculan:
-`Precio_Final = (Predicción_Bruta_Modelo * Mult_País ({pais_escalador_for_scenarios:.2f}x) * Mult_Mejora_Escenario)`
-Mult. Mejora Escenario: +1 Baño (2.0x), +1 Hab. (1.5x), +Ambos (2.5x).
-El 'Precio por Noche' de 'Propiedad Base' es el resultado de la predicción interactiva. Su '(Info) Mult. Mejora Aplicado' refleja el escalador de la sección interactiva (vs. defaults), y su '(Info) Pred. Modelo Bruta Aprox.' es una estimación inversa.
-"""
-                st.info(final_note_text)
 
             except KeyError as e:
                 st.error(f"Error de KeyError en simulación: {e}. Verifique 'EXPECTED_MODEL_FEATURES' y datos de escenario.")
