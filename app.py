@@ -493,6 +493,8 @@ else:
                         'Inversión Total (COP)': costo_inversion_total,
                         'ROI (%)': roi,
                         '(Info) Pred. Modelo Bruta Aprox.': scenario['raw_model_pred'],
+                        '(Info) Mult. País Usado': pais_escalador_for_scenarios,
+                        '(Info) Mult. Mejora Aplicado': scenario['improvement_mult']
                     })
                 results_df = pd.DataFrame(results_list)
                 st.subheader("Resultados de Simulación y Rentabilidad")
