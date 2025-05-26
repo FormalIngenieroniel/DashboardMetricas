@@ -377,13 +377,13 @@ with col_form:
                         info_messages.append(mensaje_tipo_escalado)
                     
                     if property_escalador != 1.0:
-                        info_messages.append(f"Mejoras (vs. base {default_property_base['bathrooms']}b, {default_property_base['bedrooms']}h): {bathroom_diff:+d}b, {bedroom_diff:+d}h -> Mult. mejoras: {property_escalador:.2f}x")
+                        
                     
                     final_calc_str = " -> ".join(info_messages)
                     if prediccion_final != prediccion : # Solo mostrar si hubo algún ajuste
-                         st.info(f"Cálculo: {final_calc_str}  \nResultado Final: COP {prediccion_final:,.2f}")
+
                     elif property_escalador == 1.0 and pais_escalador == 1.0:
-                         st.info("Se utiliza la predicción base del modelo sin ajustes adicionales de escaladores explícitos.")
+                         st.info("Se realiz la prediccion con exito.")
 
 
                     st.session_state.precio_base_simulacion = prediccion_final
@@ -555,4 +555,4 @@ else:
 
 # --- Pie de Página ---
 st.markdown("---")
-st.markdown("Dashboard POC desarrollado con Streamlit. Modelo de Regresión de Precios Airbnb.")
+st.markdown("Dashboard POC desarrollado con Streamlit. Modelo de Regresión de Precios Airbnb, parcial tercer corte Metricas de Desempeño.")
